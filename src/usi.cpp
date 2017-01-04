@@ -1,4 +1,4 @@
-/*
+﻿/*
   Apery, a USI shogi playing engine derived from Stockfish, a UCI chess playing engine.
   Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
   Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
@@ -109,7 +109,7 @@ void OptionsMap::init(Searcher* s) {
     (*this)["Minimum_Thinking_Time"]       = USIOption(20, 0, INT_MAX);
     (*this)["Threads"]                     = USIOption(cpuCoreCount(), 1, MaxThreads, onThreads, s);
 #ifdef NDEBUG
-    (*this)["Engine_Name"]                 = USIOption("Apery");
+    (*this)["Engine_Name"]                 = USIOption("PPAPery");
 #else
     (*this)["Engine_Name"]                 = USIOption("Apery Debug Build");
 #endif
@@ -277,9 +277,9 @@ bool qsearch(Position& pos, const u16 bestMove16) {
     //  pos.doMove(bestMove, st);
     //}
     if (pos.inCheck())
-        pos.searcher()->qsearch<PV, true >(pos, ss, -ScoreInfinite, ScoreInfinite, Depth0);
+        pos.searcher()->qsearch<PV, true >(pos, ss, -ScoreInfinite, ScoreInfinite);
     else
-        pos.searcher()->qsearch<PV, false>(pos, ss, -ScoreInfinite, ScoreInfinite, Depth0);
+        pos.searcher()->qsearch<PV, false>(pos, ss, -ScoreInfinite, ScoreInfinite);
     const Move bestMove = move16toMove(Move(bestMove16), pos);
     // pv 取得
     return extractPVFromTT<Undo>(pos, moves, bestMove);

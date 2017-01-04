@@ -1,4 +1,4 @@
-/*
+﻿/*
   Apery, a USI shogi playing engine derived from Stockfish, a UCI chess playing engine.
   Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
   Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
@@ -33,14 +33,14 @@ struct SplitPoint;
 
 struct SearchStack {
     Move* pv;
+	CounterMoveStats* counterMoves;
     Ply ply;
     Move currentMove;
     Move excludedMove;
     Move killers[2];
     Score staticEval;
-    bool skipEarlyPruning;
+	Score history;
     int moveCount;
-    CounterMoveStats* counterMoves;
     EvalSum staticEvalRaw; // 評価関数の差分計算用、値が入っていないときは [0] を ScoreNotEvaluated にしておく。
                            // 常に Black 側から見た評価値を入れておく。
                            // 0: 先手玉に対する評価値, 1: 後手玉に対する評価値, 2: 双玉に対する評価値
@@ -127,12 +127,12 @@ struct Searcher {
     STATIC void init();
     STATIC void clear();
     template <NodeType NT, bool INCHECK>
-    STATIC Score qsearch(Position& pos, SearchStack* ss, Score alpha, Score beta, const Depth depth);
+    STATIC Score qsearch(Position& pos, SearchStack* ss, Score alpha, Score beta, const Depth depth = Depth0);
 #if defined INANIWA_SHIFT
     STATIC void detectInaniwa(const Position& pos);
 #endif
     template <NodeType NT>
-    STATIC Score search(Position& pos, SearchStack* ss, Score alpha, Score beta, const Depth depth, const bool cutNode);
+    STATIC Score search(Position& pos, SearchStack* ss, Score alpha, Score beta, const Depth depth, const bool cutNode, bool skipEarlyPruning);
     STATIC void think();
     STATIC void checkTime();
 

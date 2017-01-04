@@ -1,4 +1,4 @@
-/*
+﻿/*
   Apery, a USI shogi playing engine derived from Stockfish, a UCI chess playing engine.
   Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
   Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
@@ -45,7 +45,7 @@ public:
     Move  move() const       { return static_cast<Move>(move16_); }
     Score score() const      { return static_cast<Score>(score16_); }
     Score evalScore() const  { return static_cast<Score>(eval16_); }
-    Depth depth() const      { return static_cast<Depth>(depth8_ * OnePly); }
+    Depth depth() const      { return static_cast<Depth>(depth8_ * int(OnePly)); }
     Bound bound() const      { return static_cast<Bound>(genBound8_ & 0x3); }
     u8    generation() const { return genBound8_ & 0xfc; }
 

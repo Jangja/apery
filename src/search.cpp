@@ -58,9 +58,8 @@ void Searcher::init() {
 void Searcher::clear() {
     tt.clear();
     for (Thread* th : threads) {
-        th->history.clear();
         th->counterMoves.clear();
-        th->fromTo.clear();
+        th->history.clear();
         th->counterMoveHistory.clear();
 		th->resetCalls = true;
     }
@@ -79,6 +78,11 @@ namespace {
 
     template <bool PVNode> inline Depth reduction(const bool improving, const Depth depth, const int moveCount) {
         return Reductions[PVNode][improving][std::min(depth / OnePly, 63)][std::min(moveCount, 63)] * OnePly;
+    }
+
+    Score statBonus(Depth depth) {
+        int d = depth / OnePly;
+        return Score(d * d + 2 * d - 2);
     }
 
     struct Skill {
@@ -146,9 +150,6 @@ namespace {
         {1, 0, 0, 0, 0, 1, 1 ,1},
     };
 
-	const Score bonus(Depth depth)   { int d = depth / OnePly; return  Score(d * d + 2 * d - 2); }
-	const Score penalty(Depth depth) { int d = depth / OnePly; return -Score(d * d + 4 * d + 1); }
-
     const size_t HalfDensitySize = std::extent<decltype(HalfDensity)>::value;
 
     Score scoreToTT(const Score s, const Ply ply) {
@@ -193,8 +194,7 @@ namespace {
 
         const Color c = pos.turn();
         Thread* thisThread = pos.thisThread();
-        thisThread->fromTo.update(c, move, bonus);
-        thisThread->history.update(pos.movedPiece(move), move.to(), bonus);
+        thisThread->history.update(c, move, bonus);
         updateCMStats(ss, pos.movedPiece(move), move.to(), bonus);
         if ((ss-1)->counterMoves) {
             const Square prevSq = (ss-1)->currentMove.to();
@@ -202,8 +202,7 @@ namespace {
         }
 
         for (int i = 0; i < quietsCount; ++i) {
-            thisThread->fromTo.update(c, quiets[i], -bonus);
-            thisThread->history.update(pos.movedPiece(quiets[i]), quiets[i].to(), -bonus);
+            thisThread->history.update(c, quiets[i], -bonus);
             updateCMStats(ss, pos.movedPiece(quiets[i]), quiets[i].to(), -bonus);
         }
     }
@@ -637,7 +636,7 @@ void Thread::search() {
 
                 const bool doEasyMove = (rootMoves[0].pv[0] == easyMove
                                          && mainThread->bestMoveChanges < 0.03
-                                         && searcher->timeManager.elapsed() > searcher->timeManager.optimum() * 5 / 42);
+                                         && searcher->timeManager.elapsed() > searcher->timeManager.optimum() * 5 / 44);
 
                 if (rootMoves.size() == 1
                     || searcher->timeManager.elapsed() > searcher->timeManager.optimum() * unstablePvFactor * improvingFactor / 628
@@ -768,6 +767,12 @@ Score Searcher::search(Position& pos, SearchStack* ss, Score alpha, Score beta, 
         default                 : UNREACHABLE;
         }
 
+#if 1
+		if (pos.gamePly() > 200 && nyugyoku(pos)) {
+			return mateIn(ss->ply);
+		}
+#endif
+
         // step3
         // mate distance pruning
         alpha = std::max(matedIn(ss->ply), alpha);
@@ -798,13 +803,22 @@ Score Searcher::search(Position& pos, SearchStack* ss, Score alpha, Score beta, 
         && ttScore != ScoreNone
         && (ttScore >= beta ? (tte->bound() & BoundLower) : (tte->bound() & BoundUpper)))
     {
-        if (ttScore >= beta && ttMove) {
-            if (!ttMove.isCaptureOrPawnPromotion())
-                updateStats(pos, ss, ttMove, nullptr, 0, bonus(depth));
+        if (ttMove) {
+            if (ttScore >= beta) {
+                if (!ttMove.isCaptureOrPawnPromotion())
+                    updateStats(pos, ss, ttMove, nullptr, 0, statBonus(depth));
 
-            // Extra penalty for a quiet TT move in previous ply when it gets refuted
-            if ((ss-1)->moveCount == 1 && !(ss-1)->currentMove.isCaptureOrPawnPromotion())
-                updateCMStats(ss-1, pos.piece(prevSq), prevSq, penalty(depth));
+                // Extra penalty for a quiet TT move in previous ply when it gets refuted
+                if ((ss-1)->moveCount == 1 && !(ss-1)->currentMove.isCaptureOrPawnPromotion())
+                    updateCMStats(ss-1, pos.piece(prevSq), prevSq, -statBonus(depth + OnePly));
+            }
+            // Penalty for a quiet ttMove that fails low
+            else if (!ttMove.isCaptureOrPawnPromotion())
+            {
+                Score penalty = -statBonus(depth + OnePly);
+                thisThread->history.update(pos.turn(), ttMove, penalty);
+                updateCMStats(ss, pos.movedPiece(ttMove), ttMove.to(), penalty);
+            }
         }
         return ttScore;
     }
@@ -850,7 +864,6 @@ Score Searcher::search(Position& pos, SearchStack* ss, Score alpha, Score beta, 
     // razoring
     if (!PVNode
         && depth < 4 * OnePly
-        && ttMove == Move::moveNone()
         && eval + RazorMargin[depth / OnePly] <= alpha)
     {
         if (depth <= OnePly)
@@ -1095,12 +1108,11 @@ movesLoop:
                 }
 #endif
 
-                ss->history = thisThread->history[movedPiece][move.to()]
+                ss->history = thisThread->history.get(oppositeColor(pos.turn()), move)
                     +    (cmh  ? (*cmh )[movedPiece][move.to()] : ScoreZero)
                     +    (fmh  ? (*fmh )[movedPiece][move.to()] : ScoreZero)
                     +    (fmh2 ? (*fmh2)[movedPiece][move.to()] : ScoreZero)
-                    +    thisThread->fromTo.get(oppositeColor(pos.turn()), move)
-					-    8000;
+                    -    4000;
 				if (ss->history > ScoreZero && (ss-1)->history < ScoreZero)
 					r -= OnePly;
 				else if (ss->history < ScoreZero && (ss-1)->history > ScoreZero)
@@ -1194,16 +1206,16 @@ movesLoop:
     else if (bestMove) {
 
         if (!bestMove.isCaptureOrPawnPromotion())
-            updateStats(pos, ss, bestMove, quietsSearched, quietCount, bonus(depth));
+            updateStats(pos, ss, bestMove, quietsSearched, quietCount, statBonus(depth));
 
         if ((ss-1)->moveCount == 1 && (ss-1)->currentMove.isCaptureOrPawnPromotion())
-            updateCMStats(ss-1, pos.piece(prevSq), prevSq, penalty(depth));
+            updateCMStats(ss-1, pos.piece(prevSq), prevSq, -statBonus(depth + OnePly));
     }
     else if(depth >= 3 * OnePly
             && !(ss-1)->currentMove.isCaptureOrPromotion()
             && (ss-1)->currentMove.isOK())
     {
-        updateCMStats(ss-1, pos.piece(prevSq), prevSq, bonus(depth));
+        updateCMStats(ss-1, pos.piece(prevSq), prevSq, statBonus(depth));
     }
 
     tte->save(posKey, scoreToTT(bestScore, ss->ply),
@@ -1445,15 +1457,14 @@ finalize:
         && !Skill(SkillLevel, searcher->options["Max_Random_Score_Diff"]).enabled()
         && rootMoves[0].pv[0] != Move::moveNone())
     {
-		for (Thread* th : searcher->threads) {
-			Depth depthDiff = th->completedDepth - bestThread->completedDepth;
-			Score scoreDiff = th->rootMoves[0].score - bestThread->rootMoves[0].score;
-			
-			if ((depthDiff > 0 && scoreDiff >= 0)
-				|| (scoreDiff > 0 && depthDiff >= 0)) {
-				bestThread = th;
-			}
-		}
+        for (Thread* th : searcher->threads) {
+            const Depth depthDiff = th->completedDepth - bestThread->completedDepth;
+            const Score scoreDiff = th->rootMoves[0].score - bestThread->rootMoves[0].score;
+
+            if (scoreDiff > 0 && depthDiff >= 0) {
+                bestThread = th;
+            }
+        }
     }
 
     previousScore = bestThread->rootMoves[0].score;

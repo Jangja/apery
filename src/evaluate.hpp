@@ -1271,10 +1271,13 @@ struct EvalSum {
 class Position;
 struct SearchStack;
 
+#if !defined HAVE_AVX2
 const size_t EvaluateTableSize = 0x400000; // 134MB
-//const size_t EvaluateTableSize = 0x2000000; // 1GB
+#else
+const size_t EvaluateTableSize = 0x2000000; // 1GB
 //const size_t EvaluateTableSize = 0x10000000; // 8GB
 //const size_t EvaluateTableSize = 0x20000000; // 17GB
+#endif
 
 using EvaluateHashEntry = EvalSum;
 struct EvaluateHashTable : HashTable<EvaluateHashEntry, EvaluateTableSize> {};

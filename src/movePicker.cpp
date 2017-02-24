@@ -248,7 +248,6 @@ void MovePicker::scoreCaptures() {
 
 template <bool IsDrop> void MovePicker::scoreNonCapturesMinusPro() {
     const HistoryStats& history = pos_.thisThread()->history;
-    const FromToStats& fromTo = pos_.thisThread()->fromTo;
 
     const CounterMoveStats* cm = (ss_-1)->counterMoves;
     const CounterMoveStats* fm = (ss_-2)->counterMoves;
@@ -259,17 +258,15 @@ template <bool IsDrop> void MovePicker::scoreNonCapturesMinusPro() {
     for (auto& m : *this) {
         const Piece movedPiece = pos_.movedPiece(m.move);
         const Square to = m.move.to();
-        m.score = history[movedPiece][to]
+        m.score = history.get(c, m.move)
             + (cm ? (*cm)[movedPiece][to] : ScoreZero)
             + (fm ? (*fm)[movedPiece][to] : ScoreZero)
-            + (f2 ? (*f2)[movedPiece][to] : ScoreZero)
-            + fromTo.get(c, m.move);
+            + (f2 ? (*f2)[movedPiece][to] : ScoreZero);
     }
 }
 
 void MovePicker::scoreEvasions() {
     const HistoryStats& history = pos_.thisThread()->history;
-    const FromToStats& fromTo = pos_.thisThread()->fromTo;
     Color c = pos_.turn();
 
     for (ExtMove& m : *this)
@@ -280,5 +277,5 @@ void MovePicker::scoreEvasions() {
             }
         }
         else
-            m.score = history[pos_.movedPiece(m.move)][m.move.to()] + fromTo.get(c, m.move);
+            m.score = history.get(c, m.move);
 }

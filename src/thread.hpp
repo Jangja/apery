@@ -46,10 +46,8 @@ struct LimitsType {
     Timer startTime;
 };
 
-template <typename T, bool CM = false>
+template <typename T>
 struct Stats {
-    static const Score Max = Score(1 << 28);
-
     const T* operator [](const Piece pc) const { return table[pc]; }
     T* operator [](const Piece pc) { return table[pc]; }
     void clear() { std::memset(table, 0, sizeof(table)); }
@@ -57,7 +55,7 @@ struct Stats {
     void update(const Piece pc, const Square to, const Score s) {
         if (abs(int(s)) >= 324)
             return;
-        table[pc][to] -= table[pc][to] * abs(int(s)) / (CM ? 936 : 324);
+        table[pc][to] -= table[pc][to] * abs(int(s)) / 936;
         table[pc][to] += int(s) * 32;
     }
 
@@ -66,11 +64,12 @@ private:
 };
 
 using MoveStats               = Stats<Move>;
-using HistoryStats            = Stats<Score, false>;
-using CounterMoveStats        = Stats<Score, true >;
+using CounterMoveStats        = Stats<Score>;
 using CounterMoveHistoryStats = Stats<CounterMoveStats>;
 
-struct FromToStats {
+struct HistoryStats {
+    static const Score Max = Score(1 << 28);
+
     Score get(const Color c, const Move m) const { return table[c][m.from()][m.to()]; }
     void clear() { std::memset(table, 0, sizeof(table)); }
     void update(const Color c, const Move m, const Score s) {
@@ -119,9 +118,8 @@ struct Thread {
     Depth rootDepth;
     Depth completedDepth;
     std::atomic_bool resetCalls;
-    HistoryStats history;
     MoveStats counterMoves;
-    FromToStats fromTo;
+    HistoryStats history;
     CounterMoveHistoryStats counterMoveHistory;
 
 private:

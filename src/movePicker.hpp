@@ -47,7 +47,7 @@ public:
     MovePicker(const Position& pos, const Move ttm, const Depth depth, const Square sq);
     MovePicker(const Position& pos, const Move ttm, const Depth depth, SearchStack* searchStack);
 
-    Move nextMove();
+    Move nextMove(bool skipQuiets = false);
 
 private:
     void scoreCaptures();

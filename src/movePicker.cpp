@@ -68,7 +68,7 @@ MovePicker::MovePicker(const Position& pos, const Move ttm, const Depth depth, S
     stage_ += (ttMove_ == Move::moveNone());
 }
 
-Move MovePicker::nextMove() {
+Move MovePicker::nextMove(bool skipQuiets) {
     Move move;
     switch (stage_) {
     case MainSearch: case EvasionSearch:
@@ -139,7 +139,7 @@ Move MovePicker::nextMove() {
             insertionSort<ExtMove*, false>(cur_, endMoves_);
         ++stage_;
     case Quiet:
-        while (cur_ < endMoves_) {
+        while (cur_ < endMoves_ && (!skipQuiets || cur_->score >= ScoreZero)) {
             move = (*cur_++).move;
             if (move != ttMove_
                 && move != ss_->killers[0]
@@ -249,9 +249,9 @@ void MovePicker::scoreCaptures() {
 template <bool IsDrop> void MovePicker::scoreNonCapturesMinusPro() {
     const HistoryStats& history = pos_.thisThread()->history;
 
-    const CounterMoveStats* cm = (ss_-1)->counterMoves;
-    const CounterMoveStats* fm = (ss_-2)->counterMoves;
-    const CounterMoveStats* f2 = (ss_-4)->counterMoves;
+    const CounterMoveStats& cm = *(ss_-1)->counterMoves;
+    const CounterMoveStats& fm = *(ss_-2)->counterMoves;
+    const CounterMoveStats& f2 = *(ss_-4)->counterMoves;
 
     const Color c = pos_.turn();
 
@@ -259,9 +259,9 @@ template <bool IsDrop> void MovePicker::scoreNonCapturesMinusPro() {
         const Piece movedPiece = pos_.movedPiece(m.move);
         const Square to = m.move.to();
         m.score = history.get(c, m.move)
-            + (cm ? (*cm)[movedPiece][to] : ScoreZero)
-            + (fm ? (*fm)[movedPiece][to] : ScoreZero)
-            + (f2 ? (*f2)[movedPiece][to] : ScoreZero);
+            + cm[movedPiece][to]
+            + fm[movedPiece][to]
+            + f2[movedPiece][to];
     }
 }
 

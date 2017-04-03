@@ -67,6 +67,10 @@ void Searcher::clear() {
 }
 
 namespace {
+    // Sizes and phases of the skip-blocks, used for distributing search depths across the threads
+    const int skipSize[] = { 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4 };
+    const int skipPhase[] = { 0, 1, 0, 1, 2, 3, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 6, 7 };
+
     const Score Tempo = (Score)20;
     const int SkillLevel = 20; // [0, 20] 大きいほど強くする予定。現状 20 以外未対応。
 
@@ -82,7 +86,7 @@ namespace {
 
     Score statBonus(Depth depth) {
         int d = depth / OnePly;
-        return Score(d * d + 2 * d - 2);
+        return d > 17 ? ScoreZero : Score(d * d + 2 * d - 2);
     }
 
     struct Skill {
@@ -125,33 +129,6 @@ namespace {
         Move best;
     };
 
-    using Row = std::vector<int>;
-
-    const Row HalfDensity[] = {
-        {0, 1},
-        {1, 0},
-        {0, 0, 1, 1},
-        {0, 1, 1, 0},
-        {1, 1, 0, 0},
-        {1, 0, 0, 1},
-        {0, 0, 0, 1, 1, 1},
-        {0, 0, 1, 1, 1, 0},
-        {0, 1, 1, 1, 0, 0},
-        {1, 1, 1, 0, 0, 0},
-        {1, 1, 0, 0, 0, 1},
-        {1, 0, 0, 0, 1, 1},
-        {0, 0, 0, 0, 1, 1, 1, 1},
-        {0, 0, 0, 1, 1, 1, 1, 0},
-        {0, 0, 1, 1, 1, 1, 0 ,0},
-        {0, 1, 1, 1, 1, 0, 0 ,0},
-        {1, 1, 1, 1, 0, 0, 0 ,0},
-        {1, 1, 1, 0, 0, 0, 0 ,1},
-        {1, 1, 0, 0, 0, 0, 1 ,1},
-        {1, 0, 0, 0, 0, 1, 1 ,1},
-    };
-
-    const size_t HalfDensitySize = std::extent<decltype(HalfDensity)>::value;
-
     Score scoreToTT(const Score s, const Ply ply) {
         assert(s != ScoreNone);
 
@@ -174,15 +151,9 @@ namespace {
     }
 
     void updateCMStats(SearchStack* ss, const Piece pc, const Square sq, const Score bonus) {
-        CounterMoveStats* cmh  = (ss-1)->counterMoves;
-        CounterMoveStats* fmh1 = (ss-2)->counterMoves;
-        CounterMoveStats* fmh2 = (ss-4)->counterMoves;
-        if (cmh)
-            cmh->update(pc, sq, bonus);
-        if (fmh1)
-            fmh1->update(pc, sq, bonus);
-        if (fmh2)
-            fmh2->update(pc, sq, bonus);
+        for (int i : {1, 2, 4})
+            if ((ss-i)->currentMove.isOK())
+                (ss-i)->counterMoves->update(pc, sq, bonus);
     }
 
     void updateStats(const Position& pos, SearchStack* ss, const Move move,
@@ -196,7 +167,7 @@ namespace {
         Thread* thisThread = pos.thisThread();
         thisThread->history.update(c, move, bonus);
         updateCMStats(ss, pos.movedPiece(move), move.to(), bonus);
-        if ((ss-1)->counterMoves) {
+        if ((ss-1)->currentMove.isOK()) {
             const Square prevSq = (ss-1)->currentMove.to();
             thisThread->counterMoves.update(pos.piece(prevSq), prevSq, move);
         }
@@ -388,7 +359,7 @@ Score Searcher::qsearch(Position& pos, SearchStack* ss, Score alpha, Score beta,
 
         if (bestScore >= beta) {
             if (!ttHit)
-                tte->save(pos.getKey(), scoreToTT(bestScore, ss->ply), BoundLower,
+                tte->save(posKey, scoreToTT(bestScore, ss->ply), BoundLower,
                           DepthNone, Move::moveNone(), ss->staticEval, tt.generation());
 
             return bestScore;
@@ -497,6 +468,8 @@ void Thread::search() {
     int lastInfoTime = -1; // 将棋所のコンソールが詰まる問題への対処用
 
     memset(ss-4, 0, 7 * sizeof(SearchStack));
+    for (int i = 4; i > 0; i--)
+        (ss-i)->counterMoves = &this->counterMoveHistory[Empty][0]; // Use as sentinel.
     completedDepth = Depth0;
 
     if (mainThread) {
@@ -525,12 +498,12 @@ void Thread::search() {
            && !searcher->signals.stop
            && (!searcher->limits.depth || searcher->threads.main()->rootDepth / OnePly <= searcher->limits.depth))
     {
-        if (!mainThread) {
-            const Row& row = HalfDensity[(idx - 1) % HalfDensitySize];
-            if (row[(rootDepth / OnePly + rootPos.gamePly()) % row.size()])
+        // Distribute search depths across the threads
+        if (idx) {
+            int i = (idx - 1) % 20;
+            if (((rootDepth / OnePly + rootPos.gamePly() + skipPhase[i]) / skipSize[i]) % 2)
                 continue;
         }
-
         if (mainThread) {
             mainThread->bestMoveChanges *= 0.505;
             mainThread->failedLow = false;
@@ -554,6 +527,13 @@ void Thread::search() {
                 (ss-1)->staticEvalRaw.p[0][0] = ss->staticEvalRaw.p[0][0] = ScoreNotEvaluated;
                 bestScore = searcher->search<PV>(rootPos, ss, alpha, beta, rootDepth, false, false);
                 std::stable_sort(std::begin(rootMoves) + pvIdx, std::end(rootMoves));
+#if 0
+                // 詰みを発見したら即指す。
+                if (!searcher->limits.ponder && rootDepth > 5 * OnePly && ScoreMateInMaxPly <= abs(bestScore) && abs(bestScore) < ScoreInfinite) {
+                    SYNCCOUT << pvInfoToUSI(rootPos, multiPV, rootDepth, alpha, beta) << SYNCENDL;
+                    searcher->signals.stop = true;
+                }
+#endif
 #if defined LEARN
                 break;
 #endif
@@ -727,7 +707,7 @@ Score Searcher::search(Position& pos, SearchStack* ss, Score alpha, Score beta, 
     Depth extension, newDepth;
     Score bestScore, score, ttScore, eval;
     bool ttHit, inCheck, givesCheck, singularExtensionNode, improving;
-    bool captureOrPawnPromotion, doFullDepthSearch, moveCountPruning;
+    bool captureOrPawnPromotion, doFullDepthSearch, moveCountPruning, skipQuiets;
     Piece movedPiece;
     int moveCount, quietCount;
 
@@ -782,7 +762,7 @@ Score Searcher::search(Position& pos, SearchStack* ss, Score alpha, Score beta, 
     }
     assert(0 <= ss->ply && ss->ply < MaxPly);
     ss->currentMove = (ss+1)->excludedMove = bestMove = Move::moveNone();
-    ss->counterMoves = nullptr;
+    ss->counterMoves = &thisThread->counterMoveHistory[Empty][0];
     (ss+2)->killers[0] = (ss+2)->killers[1] = Move::moveNone();
 	Square prevSq = (ss-1)->currentMove.to();
 
@@ -828,9 +808,9 @@ Score Searcher::search(Position& pos, SearchStack* ss, Score alpha, Score beta, 
         && !inCheck)
     {
         if ((move = pos.mateMoveIn1Ply())) {
-            ss->staticEval = bestScore = mateIn(ss->ply);
+            bestScore = mateIn(ss->ply);
             tte->save(posKey, scoreToTT(bestScore, ss->ply), BoundExact, depth,
-                      move, ss->staticEval, tt.generation());
+                      move, bestScore, tt.generation());
             return bestScore;
         }
     }
@@ -890,12 +870,12 @@ Score Searcher::search(Position& pos, SearchStack* ss, Score alpha, Score beta, 
         && eval >= beta
         && (ss->staticEval >= beta - 35 * (depth / OnePly - 6) || depth >= 13 * OnePly))
     {
-        ss->currentMove = Move::moveNull();
-        ss->counterMoves = nullptr;
-
         assert(eval - beta >= 0);
 
         const Depth R = ((823 + 67 * depth / OnePly) / 256 + std::min((eval - beta) / PawnScore, 3)) * OnePly;
+
+        ss->currentMove = Move::moveNull();
+        ss->counterMoves = &thisThread->counterMoveHistory[Empty][0];
 
         pos.doNullMove<true>(st);
         (ss+1)->staticEvalRaw = (ss)->staticEvalRaw; // 評価値の差分評価の為。
@@ -964,9 +944,12 @@ Score Searcher::search(Position& pos, SearchStack* ss, Score alpha, Score beta, 
 
 movesLoop:
 
-    const CounterMoveStats* cmh  = (ss-1)->counterMoves;
-    const CounterMoveStats* fmh  = (ss-2)->counterMoves;
-    const CounterMoveStats* fmh2 = (ss-4)->counterMoves;
+    const CounterMoveStats& cmh = *(ss-1)->counterMoves;
+    const CounterMoveStats& fmh = *(ss-2)->counterMoves;
+    const CounterMoveStats& fm2 = *(ss-4)->counterMoves;
+    const bool cm_ok = (ss-1)->currentMove.isOK();
+    const bool fm_ok = (ss-2)->currentMove.isOK();
+    const bool f2_ok = (ss-4)->currentMove.isOK();
 
     MovePicker mp(pos, ttMove, depth, ss);
     const CheckInfo ci(pos);
@@ -982,10 +965,11 @@ movesLoop:
                              && !excludedMove
                              && (tte->bound() & BoundLower)
                              &&  tte->depth() >= depth - 3 * OnePly);
+    skipQuiets = false;
 
     // step11
     // Loop through moves
-    while ((move = mp.nextMove()) != Move::moveNone()) {
+    while ((move = mp.nextMove(skipQuiets)) != Move::moveNone()) {
         if (move == excludedMove)
             continue;
 
@@ -1007,17 +991,9 @@ movesLoop:
         moveCountPruning = (depth < 16 * OnePly
                             && moveCount >= FutilityMoveCounts[improving][depth / OnePly]);
         // step12
-        if (givesCheck
-            && !moveCountPruning
-            && pos.seeSign(move) >= ScoreZero)
-        {
-            extension = OnePly;
-        }
-
-        // singuler extension
+        // Singular and Gives Check Extensions
         if (singularExtensionNode
             && move == ttMove
-            && extension == Depth0
             && pos.pseudoLegalMoveIsLegal<false, false>(move, ci.pinned))
         {
             const Score rBeta = std::max(ttScore - 2 * depth / OnePly, -ScoreMate0Ply);
@@ -1028,6 +1004,12 @@ movesLoop:
 
             if (score < rBeta)
                 extension = OnePly;
+        }
+        else if (givesCheck
+                 && !moveCountPruning
+                 && pos.seeSign(move) >= ScoreZero)
+        {
+            extension = OnePly;
         }
 
         newDepth = depth - OnePly + extension;
@@ -1041,16 +1023,20 @@ movesLoop:
                 && !givesCheck)
             {
                 // move count based pruning
-                if (moveCountPruning)
+                if (moveCountPruning) {
+#if 0
+                    skipQuiets = true;
+#endif
                     continue;
+                }
 
                 const int lmrDepth = std::max(newDepth - reduction<PVNode>(improving, depth, moveCount), Depth0) / OnePly;
 
                 // countermoves based pruning
                 if (lmrDepth < 3
-                    && (!cmh  || (*cmh )[movedPiece][move.to()] < ScoreZero)
-                    && (!fmh  || (*fmh )[movedPiece][move.to()] < ScoreZero)
-                    && (!fmh2 || (*fmh2)[movedPiece][move.to()] < ScoreZero || (cmh && fmh)))
+                    && ((cmh[movedPiece][move.to()] < ScoreZero) || !cm_ok)
+                    && ((fmh[movedPiece][move.to()] < ScoreZero) || !fm_ok)
+                    && ((fm2[movedPiece][move.to()] < ScoreZero) || !f2_ok || (cm_ok && fm_ok)))
                     continue;
 
                 // futility pruning: parent node
@@ -1109,10 +1095,10 @@ movesLoop:
 #endif
 
                 ss->history = thisThread->history.get(oppositeColor(pos.turn()), move)
-                    +    (cmh  ? (*cmh )[movedPiece][move.to()] : ScoreZero)
-                    +    (fmh  ? (*fmh )[movedPiece][move.to()] : ScoreZero)
-                    +    (fmh2 ? (*fmh2)[movedPiece][move.to()] : ScoreZero)
-                    -    4000;
+                    + cmh[movedPiece][move.to()]
+                    + fmh[movedPiece][move.to()]
+                    + fm2[movedPiece][move.to()]
+                    - 4000;
 				if (ss->history > ScoreZero && (ss-1)->history < ScoreZero)
 					r -= OnePly;
 				else if (ss->history < ScoreZero && (ss-1)->history > ScoreZero)
@@ -1208,20 +1194,21 @@ movesLoop:
         if (!bestMove.isCaptureOrPawnPromotion())
             updateStats(pos, ss, bestMove, quietsSearched, quietCount, statBonus(depth));
 
-        if ((ss-1)->moveCount == 1 && (ss-1)->currentMove.isCaptureOrPawnPromotion())
+        if ((ss-1)->moveCount == 1 && !(ss-1)->currentMove.isCaptureOrPawnPromotion())
             updateCMStats(ss-1, pos.piece(prevSq), prevSq, -statBonus(depth + OnePly));
     }
     else if(depth >= 3 * OnePly
             && !(ss-1)->currentMove.isCaptureOrPromotion()
-            && (ss-1)->currentMove.isOK())
+            && cm_ok)
     {
         updateCMStats(ss-1, pos.piece(prevSq), prevSq, statBonus(depth));
     }
 
-    tte->save(posKey, scoreToTT(bestScore, ss->ply),
-              (bestScore >= beta ? BoundLower :
-               PVNode && bestMove ? BoundExact : BoundUpper),
-              depth, bestMove, ss->staticEval, tt.generation());
+    if (!excludedMove)
+        tte->save(posKey, scoreToTT(bestScore, ss->ply),
+                  (bestScore >= beta ? BoundLower :
+                   PVNode && bestMove ? BoundExact : BoundUpper),
+                  depth, bestMove, ss->staticEval, tt.generation());
 
     assert(-ScoreInfinite < bestScore && bestScore < ScoreInfinite);
 
@@ -1284,7 +1271,7 @@ void initSearchTable() {
     for (int improving = 0; improving < 2; ++improving) {
         for (int d = 1; d < 64; d++) {
             for (int mc = 1; mc < 64; mc++) {
-                const double r = log(d) * log(mc) / 2;
+                const double r = log(d) * log(mc) / 1.95;
 
                 Reductions[NonPV][improving][d][mc] = int(std::round(r));
                 Reductions[PV   ][improving][d][mc] = std::max(Reductions[NonPV][improving][d][mc] - 1, 0);
@@ -1469,12 +1456,8 @@ finalize:
 
     previousScore = bestThread->rootMoves[0].score;
 
-#if 0
     if (bestThread != this)
         SYNCCOUT << pvInfoToUSI(bestThread->rootPos, 1, bestThread->completedDepth, -ScoreInfinite, ScoreInfinite) << SYNCENDL;
-#else
-    SYNCCOUT << pvInfoToUSI(bestThread->rootPos, 1, bestThread->completedDepth, -ScoreInfinite, ScoreInfinite) << SYNCENDL;
-#endif
 
     if (nyugyokuWin)
         SYNCCOUT << "bestmove win" << SYNCENDL;

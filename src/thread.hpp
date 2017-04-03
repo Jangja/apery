@@ -53,9 +53,9 @@ struct Stats {
     void clear() { std::memset(table, 0, sizeof(table)); }
     void update(const Piece pc, const Square to, const Move m) { table[pc][to] = m; }
     void update(const Piece pc, const Square to, const Score s) {
-        if (abs(int(s)) >= 324)
-            return;
-        table[pc][to] -= table[pc][to] * abs(int(s)) / 936;
+        const int denom = 936;
+        assert(abs(int(v)) <= denom); // Needed for stability.
+        table[pc][to] -= table[pc][to] * abs(int(s)) / denom;
         table[pc][to] += int(s) * 32;
     }
 
@@ -73,12 +73,12 @@ struct HistoryStats {
     Score get(const Color c, const Move m) const { return table[c][m.from()][m.to()]; }
     void clear() { std::memset(table, 0, sizeof(table)); }
     void update(const Color c, const Move m, const Score s) {
-        if (abs(int(s)) >= 324)
-            return;
+        const int denom = 324;
+        assert(abs(int(v)) <= denom); // Needed for stability.
         const Square from = m.from();
         const Square to = m.to();
 
-        table[c][from][to] -= table[c][from][to] * abs(int(s)) / 324;
+        table[c][from][to] -= table[c][from][to] * abs(int(s)) / denom;
         table[c][from][to] += int(s) * 32;
     }
 

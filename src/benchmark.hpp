@@ -25,6 +25,6 @@
 #include "common.hpp"
 
 class Position;
-void benchmark(Position& pos);
+void benchmark(Position& pos, std::istream& is);
 
 #endif // #ifndef APERY_BENCHMARK_HPP

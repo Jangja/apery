@@ -109,7 +109,7 @@ void OptionsMap::init(Searcher* s) {
     (*this)["Minimum_Thinking_Time"]       = USIOption(20, 0, INT_MAX);
     (*this)["Threads"]                     = USIOption(cpuCoreCount(), 1, MaxThreads, onThreads, s);
 #ifdef NDEBUG
-    (*this)["Engine_Name"]                 = USIOption("PPAPery 170224");
+    (*this)["Engine_Name"]                 = USIOption("PPAPery 170403");
 #else
     (*this)["Engine_Name"]                 = USIOption("Apery Debug Build");
 #endif
@@ -1102,7 +1102,7 @@ void Searcher::doUSICommandLoop(int argc, char* argv[]) {
                 std::unique_ptr<Evaluator>(new Evaluator)->init(options["Eval_Dir"], true);
                 evalTableIsRead = true;
             }
-            benchmark(pos);
+            benchmark(pos, ssCmd);
         }
         else if (token == "key"      ) SYNCCOUT << pos.getKey() << SYNCENDL;
         else if (token == "tosfen"   ) SYNCCOUT << pos.toSFEN() << SYNCENDL;

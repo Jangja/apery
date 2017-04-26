@@ -62,6 +62,9 @@ void Searcher::clear() {
         th->history.clear();
         th->counterMoveHistory.clear();
 		th->resetCalls = true;
+        CounterMoveStats& cm = th->counterMoveHistory[Empty][0];
+        int* t = &cm[Empty][0];
+        std::fill(t, t + sizeof(cm), CounterMovePruneThreshold - 1);
     }
     threads.main()->previousScore = ScoreInfinite;
 }
@@ -84,9 +87,9 @@ namespace {
         return Reductions[PVNode][improving][std::min(depth / OnePly, 63)][std::min(moveCount, 63)] * OnePly;
     }
 
-    Score statBonus(Depth depth) {
+    int statBonus(Depth depth) {
         int d = depth / OnePly;
-        return d > 17 ? ScoreZero : Score(d * d + 2 * d - 2);
+        return d > 17 ? 0 : d * d + 2 * d - 2;
     }
 
     struct Skill {
@@ -150,14 +153,14 @@ namespace {
         *pv = Move::moveNone();
     }
 
-    void updateCMStats(SearchStack* ss, const Piece pc, const Square sq, const Score bonus) {
+    void updateCMStats(SearchStack* ss, const Piece pc, const Square sq, const int bonus) {
         for (int i : {1, 2, 4})
             if ((ss-i)->currentMove.isOK())
                 (ss-i)->counterMoves->update(pc, sq, bonus);
     }
 
     void updateStats(const Position& pos, SearchStack* ss, const Move move,
-                     const Move* quiets, const int quietsCount, const Score bonus) {
+                     const Move* quiets, const int quietsCount, const int bonus) {
         if (ss->killers[0] != move) {
             ss->killers[1] = ss->killers[0];
             ss->killers[0] = move;
@@ -395,7 +398,7 @@ Score Searcher::qsearch(Position& pos, SearchStack* ss, Score alpha, Score beta,
                 continue;
             }
 
-            if (futilityBase <= alpha && pos.see(move) <= ScoreZero) {
+            if (futilityBase <= alpha && !pos.seeGe(move, ScoreZero+1)) {
                 bestScore = std::max(bestScore, futilityBase);
                 continue;
             }
@@ -407,7 +410,7 @@ Score Searcher::qsearch(Position& pos, SearchStack* ss, Score alpha, Score beta,
 
         if ((!INCHECK || evasionPrunable)
             && (!move.isPromotion() || move.pieceTypeFrom() != Pawn) // todo: この条件は不要そう。
-            && pos.seeSign(move) < ScoreZero)
+            && !pos.seeGe(move, ScoreZero))
         {
             continue;
         }
@@ -716,7 +719,7 @@ Score Searcher::search(Position& pos, SearchStack* ss, Score alpha, Score beta, 
     Thread* thisThread = pos.thisThread();
     inCheck = pos.inCheck();
     moveCount = quietCount = ss->moveCount = 0;
-	ss->history = ScoreZero;
+	ss->history = 0;
     bestScore = -ScoreInfinite;
     ss->ply = (ss-1)->ply + 1;
 
@@ -795,7 +798,7 @@ Score Searcher::search(Position& pos, SearchStack* ss, Score alpha, Score beta, 
             // Penalty for a quiet ttMove that fails low
             else if (!ttMove.isCaptureOrPawnPromotion())
             {
-                Score penalty = -statBonus(depth + OnePly);
+                int penalty = -statBonus(depth);
                 thisThread->history.update(pos.turn(), ttMove, penalty);
                 updateCMStats(ss, pos.movedPiece(ttMove), ttMove.to(), penalty);
             }
@@ -809,7 +812,7 @@ Score Searcher::search(Position& pos, SearchStack* ss, Score alpha, Score beta, 
     {
         if ((move = pos.mateMoveIn1Ply())) {
             bestScore = mateIn(ss->ply);
-            tte->save(posKey, scoreToTT(bestScore, ss->ply), BoundExact, depth,
+            tte->save(posKey, scoreToTT(bestScore, ss->ply), BoundExact, DepthMax - OnePly,
                       move, bestScore, tt.generation());
             return bestScore;
         }
@@ -947,9 +950,6 @@ movesLoop:
     const CounterMoveStats& cmh = *(ss-1)->counterMoves;
     const CounterMoveStats& fmh = *(ss-2)->counterMoves;
     const CounterMoveStats& fm2 = *(ss-4)->counterMoves;
-    const bool cm_ok = (ss-1)->currentMove.isOK();
-    const bool fm_ok = (ss-2)->currentMove.isOK();
-    const bool f2_ok = (ss-4)->currentMove.isOK();
 
     MovePicker mp(pos, ttMove, depth, ss);
     const CheckInfo ci(pos);
@@ -1007,7 +1007,7 @@ movesLoop:
         }
         else if (givesCheck
                  && !moveCountPruning
-                 && pos.seeSign(move) >= ScoreZero)
+                 && pos.seeGe(move, ScoreZero))
         {
             extension = OnePly;
         }
@@ -1024,7 +1024,7 @@ movesLoop:
             {
                 // move count based pruning
                 if (moveCountPruning) {
-#if 0
+#if 1
                     skipQuiets = true;
 #endif
                     continue;
@@ -1034,9 +1034,8 @@ movesLoop:
 
                 // countermoves based pruning
                 if (lmrDepth < 3
-                    && ((cmh[movedPiece][move.to()] < ScoreZero) || !cm_ok)
-                    && ((fmh[movedPiece][move.to()] < ScoreZero) || !fm_ok)
-                    && ((fm2[movedPiece][move.to()] < ScoreZero) || !f2_ok || (cm_ok && fm_ok)))
+                    && (cmh[movedPiece][move.to()] < CounterMovePruneThreshold)
+                    && (fmh[movedPiece][move.to()] < CounterMovePruneThreshold))
                     continue;
 
                 // futility pruning: parent node
@@ -1047,12 +1046,12 @@ movesLoop:
 
                 // Prune moves with negative SEE
                 if (lmrDepth < 8
-                    && pos.seeSign(move) < Score(-35 * lmrDepth * lmrDepth))
+                    && !pos.seeGe(move, Score(-35 * lmrDepth * lmrDepth)))
                     continue;
             }
             else if (depth < 7 * OnePly
 					 && !extension
-                     && pos.seeSign(move) < Score(-PawnScore * int(depth / OnePly)))
+                     && !pos.seeGe(move, Score(-CapturePawnScore * int(depth / OnePly))))
                 continue;
         }
 
@@ -1087,6 +1086,7 @@ movesLoop:
                     r += 2 * OnePly;
 #if 0
                 else if (!move.isDrop()
+                         && !move.isPromotion()
                          //&& pieceToPieceType(pos.piece(move.to())) != Pawn
                          && pos.seeSign(makeMove(pieceToPieceType(pos.piece(move.to())), move.to(), move.from())) < ScoreZero)
                 {
@@ -1099,9 +1099,9 @@ movesLoop:
                     + fmh[movedPiece][move.to()]
                     + fm2[movedPiece][move.to()]
                     - 4000;
-				if (ss->history > ScoreZero && (ss-1)->history < ScoreZero)
+				if (ss->history > 0 && (ss-1)->history < 0)
 					r -= OnePly;
-				else if (ss->history < ScoreZero && (ss-1)->history > ScoreZero)
+				else if (ss->history < 0 && (ss-1)->history > 0)
 					r += OnePly;
                 r = std::max(Depth0, (r / OnePly - ss->history / 20000) * OnePly);
             }
@@ -1199,7 +1199,7 @@ movesLoop:
     }
     else if(depth >= 3 * OnePly
             && !(ss-1)->currentMove.isCaptureOrPromotion()
-            && cm_ok)
+            && (ss-1)->currentMove.isOK())
     {
         updateCMStats(ss-1, pos.piece(prevSq), prevSq, statBonus(depth));
     }
@@ -1283,8 +1283,8 @@ void initSearchTable() {
     }
 
     for (int d = 0; d < 16; ++d) {
-        FutilityMoveCounts[0][d] = int(2.4 + 0.773 * pow(d + 0.00, 1.8));
-        FutilityMoveCounts[1][d] = int(2.9 + 1.045 * pow(d + 0.49, 1.8));
+        FutilityMoveCounts[0][d] = int(2.4 + 0.74 * pow(d, 1.78));
+        FutilityMoveCounts[1][d] = int(5.0 + 1.00 * pow(d, 2.00));
     }
 }
 
@@ -1459,6 +1459,10 @@ finalize:
     if (bestThread != this)
         SYNCCOUT << pvInfoToUSI(bestThread->rootPos, 1, bestThread->completedDepth, -ScoreInfinite, ScoreInfinite) << SYNCENDL;
 
+#ifdef RESIGN
+    if (searched && previousScore < -searcher->options["Resign"])
+        SYNCCOUT << "bestmove resign" << SYNCENDL;
+#endif
     if (nyugyokuWin)
         SYNCCOUT << "bestmove win" << SYNCENDL;
     else if (!bestThread->rootMoves[0].pv[0])

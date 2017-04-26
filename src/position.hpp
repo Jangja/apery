@@ -329,8 +329,7 @@ public:
     void undoMove(const Move move);
     template <bool DO> void doNullMove(StateInfo& backUpSt);
 
-    Score see(const Move move, const int asymmThreshold = 0) const;
-    Score seeSign(const Move move) const;
+    bool seeGe(Move m, Score threshold) const;
 
     template <Color US> Move mateMoveIn1Ply();
     Move mateMoveIn1Ply();

@@ -39,7 +39,7 @@ struct SearchStack {
     Move excludedMove;
     Move killers[2];
     Score staticEval;
-	Score history;
+	int history;
     int moveCount;
     EvalSum staticEvalRaw; // 評価関数の差分計算用、値が入っていないときは [0] を ScoreNotEvaluated にしておく。
                            // 常に Black 側から見た評価値を入れておく。
@@ -141,5 +141,7 @@ struct Searcher {
 };
 
 void initSearchTable();
+
+const int CounterMovePruneThreshold = 0;
 
 #endif // #ifndef APERY_SEARCH_HPP

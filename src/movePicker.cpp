@@ -31,7 +31,7 @@ MovePicker::MovePicker(const Position& pos, const Move ttm, const Score th) : po
     ttMove_ = (ttm
                && pos.moveIsPseudoLegal(ttm)
                && ttm.isCaptureOrPawnPromotion()
-               && pos.see(ttm) > threshold_ ? ttm : Move::moveNone());
+               && pos.seeGe(ttm, threshold_) ? ttm : Move::moveNone());
     stage_ += (ttMove_ == Move::moveNone());
 }
 
@@ -87,7 +87,7 @@ Move MovePicker::nextMove(bool skipQuiets) {
         while (cur_ < endMoves_) {
             move = pickBest(cur_++, endMoves_);
             if (move != ttMove_) {
-                if (pos_.seeSign(move) >= ScoreZero)
+                if (pos_.seeGe(move, ScoreZero))
                     return move;
                 (*endBadCaptures_++).move = move;
             }
@@ -131,12 +131,7 @@ Move MovePicker::nextMove(bool skipQuiets) {
         endMoves_ = generateMoves<Drop>(cur_, pos_);
         scoreNonCapturesMinusPro<true>();
         cur_ = endBadCaptures_;
-        if (depth_ < 3 * OnePly) {
-            ExtMove* goodQuiet = std::partition(cur_, endMoves_, [](const ExtMove& m) { return m.score > ScoreZero; });
-            insertionSort<ExtMove*, false>(cur_, goodQuiet);
-        }
-        else
-            insertionSort<ExtMove*, false>(cur_, endMoves_);
+        partialInsertionSort(cur_, endMoves_, -4000 * depth_ / OnePly);
         ++stage_;
     case Quiet:
         while (cur_ < endMoves_ && (!skipQuiets || cur_->score >= ScoreZero)) {
@@ -176,7 +171,7 @@ Move MovePicker::nextMove(bool skipQuiets) {
         while (cur_ < endMoves_) {
             move = pickBest(cur_++, endMoves_);
             if (move != ttMove_
-                && pos_.see(move) > threshold_)
+                && pos_.seeGe(move, threshold_))
             {
                 return move;
             }
@@ -233,11 +228,10 @@ Move MovePicker::nextMove(bool skipQuiets) {
     return Move::moveNone();
 }
 
-const Score LVATable[PieceTypeNum] = {
-    Score(0), Score(1), Score(2), Score(3), Score(4), Score(7), Score(8), Score(6), Score(10000),
-    Score(5), Score(5), Score(5), Score(5), Score(9), Score(10)
+const int LVATable[PieceTypeNum] = {
+    0, 1, 2, 3, 4, 7, 8, 6, 10000, 5, 5, 5, 5, 9, 10
 };
-inline Score LVA(const PieceType pt) { return LVATable[pt]; }
+inline int LVA(const PieceType pt) { return LVATable[pt]; }
 
 void MovePicker::scoreCaptures() {
     for (ExtMove& m : *this) {

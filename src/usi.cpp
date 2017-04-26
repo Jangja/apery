@@ -109,9 +109,12 @@ void OptionsMap::init(Searcher* s) {
     (*this)["Minimum_Thinking_Time"]       = USIOption(20, 0, INT_MAX);
     (*this)["Threads"]                     = USIOption(cpuCoreCount(), 1, MaxThreads, onThreads, s);
 #ifdef NDEBUG
-    (*this)["Engine_Name"]                 = USIOption("PPAPery 170403");
+    (*this)["Engine_Name"]                 = USIOption("PPAPery 170426");
 #else
     (*this)["Engine_Name"]                 = USIOption("Apery Debug Build");
+#endif
+#ifdef RESIGN
+    (*this)["Resign"] = USIOption(3000, 0, 30000);
 #endif
 }
 

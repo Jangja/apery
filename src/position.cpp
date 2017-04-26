@@ -645,83 +645,62 @@ namespace {
     }
 }
 
-Score Position::see(const Move move, const int asymmThreshold) const {
+bool Position::seeGe(Move move, Score threshold) const {
+    assert(move.isOK());
+
     const Square to = move.to();
-    Square from;
-    PieceType ptCaptured;
-    Bitboard occ = occupiedBB();
+    const Square from = move.from();
+    PieceType nextVictim = move.pieceTypeTo();
+    Color stm = oppositeColor(this->turn()); // First consider opponent's move
+    Score balance = capturePieceScore(move.cap()); // Values of the pieces taken by us minus opponent's ones
+    Bitboard occupied = occupiedBB();
     Bitboard attackers;
-    Bitboard opponentAttackers;
-    Color turn = oppositeColor(this->turn());
-    Score swapList[32];
-    if (move.isDrop()) {
-        opponentAttackers = attackersTo(turn, to, occ);
-        if (!opponentAttackers)
-            return ScoreZero;
-        attackers = opponentAttackers | attackersTo(oppositeColor(turn), to, occ);
-        swapList[0] = ScoreZero;
-        ptCaptured = move.pieceTypeDropped();
+    Bitboard stmAttackers;
+
+    if (move.isPromotion())
+        balance += promotePieceScore(move.pieceTypeFrom());
+
+    if (balance < threshold)
+        return false;
+
+    if (nextVictim == King)
+        return true;
+
+    balance -= capturePieceScore(nextVictim);
+
+    if (balance >= threshold)
+        return true;
+
+    bool relativeStm = true; // True if the opponent is to move
+
+    if (!move.isDrop())
+        occupied.xorBit(from);
+
+    attackers = attackersTo(to, occupied);
+
+    while (true) 
+    {
+        stmAttackers = attackers & bbOf(stm);
+
+        if (!stmAttackers)
+            return relativeStm;
+
+        nextVictim = nextAttacker<Pawn>(*this, to, stmAttackers, occupied, attackers, stm);
+        attackers &= occupied;
+
+        if (nextVictim == King)
+            return relativeStm == bool(attackers & bbOf(oppositeColor(stm)));
+
+        balance += relativeStm ?  capturePieceScore(nextVictim)
+                               : -capturePieceScore(nextVictim);
+
+        relativeStm = !relativeStm;
+
+        if (relativeStm == (balance >= threshold))
+            return relativeStm;
+
+        stm = oppositeColor(stm);	
     }
-    else {
-        from = move.from();
-        occ.xorBit(from);
-        opponentAttackers = attackersTo(turn, to, occ);
-        if (!opponentAttackers) {
-            if (move.isPromotion()) {
-                const PieceType ptFrom = move.pieceTypeFrom();
-                return capturePieceScore(move.cap()) + promotePieceScore(ptFrom);
-            }
-            return capturePieceScore(move.cap());
-        }
-        attackers = opponentAttackers | attackersTo(oppositeColor(turn), to, occ);
-        swapList[0] = capturePieceScore(move.cap());
-        ptCaptured = move.pieceTypeFrom();
-        if (move.isPromotion()) {
-            const PieceType ptFrom = move.pieceTypeFrom();
-            swapList[0] += promotePieceScore(ptFrom);
-            ptCaptured += PTPromote;
-        }
-    }
-
-    int slIndex = 1;
-    do {
-        swapList[slIndex] = -swapList[slIndex - 1] + capturePieceScore(ptCaptured);
-
-        ptCaptured = nextAttacker<Pawn>(*this, to, opponentAttackers, occ, attackers, turn);
-
-        attackers &= occ;
-        ++slIndex;
-        turn = oppositeColor(turn);
-        opponentAttackers = attackers & bbOf(turn);
-
-        if (ptCaptured == King) {
-            if (opponentAttackers)
-                swapList[slIndex++] = CaptureKingScore;
-            break;
-        }
-    } while (opponentAttackers);
-
-    if (asymmThreshold) {
-        for (int i = 0; i < slIndex; i += 2) {
-            if (swapList[i] < asymmThreshold)
-                swapList[i] = -CaptureKingScore;
-        }
-    }
-
-    // nega max 的に駒の取り合いの点数を求める。
-    while (--slIndex)
-        swapList[slIndex-1] = std::min(-swapList[slIndex], swapList[slIndex-1]);
-    return swapList[0];
-}
-
-Score Position::seeSign(const Move move) const {
-    if (move.isCapture()) {
-        const PieceType ptFrom = move.pieceTypeFrom();
-        const Square to = move.to();
-        if (capturePieceScore(ptFrom) <= capturePieceScore(piece(to)))
-            return static_cast<Score>(1);
-    }
-    return see(move);
 }
 
 namespace {

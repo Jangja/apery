@@ -94,4 +94,8 @@
 #define FIND_MAGIC
 #endif
 
+#if 0
+#define RESIGN
+#endif
+
 #endif // #ifndef APERY_IFDEF_HPP

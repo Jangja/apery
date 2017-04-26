@@ -222,4 +222,17 @@ inline Move move16toMove(const Move move, const Position& pos) {
     return move | pieceType2Move(ptFrom) | capturedPieceType2Move(move.to(), pos);
 }
 
+inline void partialInsertionSort(ExtMove* begin, ExtMove* end, int limit) {
+    for (ExtMove *sortedEnd = begin + 1, *p = begin + 1; p < end; ++p) {
+        if (p->score >= limit) {
+            ExtMove tmp = *p, *q;
+            *p = *sortedEnd;
+            for (q = sortedEnd; q != begin && *(q - 1) < tmp; --q)
+                *q = *(q - 1);
+            *q = tmp;
+            ++sortedEnd;
+        }
+    }
+}
+
 #endif // #ifndef APERY_MOVE_HPP

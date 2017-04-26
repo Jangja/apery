@@ -52,11 +52,11 @@ struct Stats {
     T* operator [](const Piece pc) { return table[pc]; }
     void clear() { std::memset(table, 0, sizeof(table)); }
     void update(const Piece pc, const Square to, const Move m) { table[pc][to] = m; }
-    void update(const Piece pc, const Square to, const Score s) {
-        const int denom = 936;
-        assert(abs(int(v)) <= denom); // Needed for stability.
-        table[pc][to] -= table[pc][to] * abs(int(s)) / denom;
-        table[pc][to] += int(s) * 32;
+    void update(const Piece pc, const Square to, const int s) {
+        const int D = 936;
+        assert(abs(s) <= D); // Consistency check for below formula
+        table[pc][to] -= table[pc][to] * abs(s) / D;
+        table[pc][to] += s * 32;
     }
 
 private:
@@ -64,26 +64,26 @@ private:
 };
 
 using MoveStats               = Stats<Move>;
-using CounterMoveStats        = Stats<Score>;
+using CounterMoveStats        = Stats<int>;
 using CounterMoveHistoryStats = Stats<CounterMoveStats>;
 
 struct HistoryStats {
-    static const Score Max = Score(1 << 28);
+    static const int Max = 1 << 28;
 
-    Score get(const Color c, const Move m) const { return table[c][m.from()][m.to()]; }
+    int get(const Color c, const Move m) const { return table[c][m.from()][m.to()]; }
     void clear() { std::memset(table, 0, sizeof(table)); }
-    void update(const Color c, const Move m, const Score s) {
-        const int denom = 324;
-        assert(abs(int(v)) <= denom); // Needed for stability.
+    void update(const Color c, const Move m, const int s) {
+        const int D = 324;
+        assert(abs(s) <= D); // Consistency check for below formula
         const Square from = m.from();
         const Square to = m.to();
 
-        table[c][from][to] -= table[c][from][to] * abs(int(s)) / denom;
-        table[c][from][to] += int(s) * 32;
+        table[c][from][to] -= table[c][from][to] * abs(s) / D;
+        table[c][from][to] += s * 32;
     }
 
 private:
-    Score table[ColorNum][(Square)PieceTypeNum + SquareNum][SquareNum]; // from は駒打ちも含めるので、その分のサイズをとる。
+    int table[ColorNum][(Square)PieceTypeNum + SquareNum][SquareNum]; // from は駒打ちも含めるので、その分のサイズをとる。
 };
 
 struct RootMove {
